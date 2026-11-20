@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Đấu Giá 19 – Mô phỏng CSDL đấu giá trực tuyến</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔨</text></svg>">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">🔨</span><div><b>Đấu Giá 19</b><small>Mô phỏng CSDL nâng cao · PostgreSQL thật</small></div></div>
+  <nav id="nav">
+    <button data-page="setup" class="active">① Khởi tạo CSDL</button>
+    <button data-page="market">② Sàn đấu giá</button>
+    <button data-page="lab">③ Thử nghiệm 2 tab</button>
+    <button data-page="queries">④ Truy vấn &amp; thống kê</button>
+    <button data-page="docs">⑤ Cơ chế vận hành</button>
+  </nav>
+  <div class="who">
+    <label>Bạn đang là
+      <select id="whoami"></select>
+    </label>
+    <span id="dbpill" class="pill">…</span>
+  </div>
+</header>
+
+<div class="layout">
+  <main id="main">
+    <section id="page-setup" class="page active"></section>
+    <section id="page-market" class="page"></section>
+    <section id="page-lab" class="page"></section>
+    <section id="page-queries" class="page"></section>
+    <section id="page-docs" class="page"></section>
+  </main>
+  <aside id="console">
+    <div class="console-head">
+      <div><b>Bảng SQL</b><small>Mọi câu lệnh website gửi vào PostgreSQL, theo thứ tự mới nhất ở trên</small></div>
+      <div class="console-actions">
+        <button id="consoleClear" class="ghost" title="Xóa bảng">Xóa</button>
+        <button id="consoleToggle" class="ghost" title="Thu gọn">⇥</button>
+      </div>
+    </div>
+    <div id="consoleList"><div class="empty">Hãy bấm một thao tác bất kỳ – câu SQL thật sẽ hiện ở đây.</div></div>
+  </aside>
+</div>
+
+<div id="modal" class="modal hidden"><div class="modal-box"><button class="modal-x" onclick="closeModal()">✕</button><div id="modalBody"></div></div></div>
+<div id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -134,14 +134,96 @@ GROUP BY p.MaPhien, p.GiaHienTai
 ORDER BY p.MaPhien;
 
 
--- Hỗ trợ cho minh chứng 5: Đo lường và so sánh thời gian thực thi
+-- -- Hỗ trợ cho minh chứng 5: Đo lường và so sánh thời gian thực thi
 
--- 1. Đo thời gian thực thi của Phương án 1 (Khóa bi quan FOR UPDATE):
-EXPLAIN ANALYZE 
-SELECT fn_TraGia(1, 8, 5750000, gen_random_uuid());
+-- -- 1. Đo thời gian thực thi của Phương án 1 (Khóa bi quan FOR UPDATE):
+-- EXPLAIN ANALYZE 
+-- SELECT fn_TraGia(1, 8, 5750000, gen_random_uuid());          -- ❌ 5.750.000 đã trả ở test 2.1 nên luôn lỗi
+
+-- -- 2. Đo thời gian thực thi của Phương án 2 (Mức cô lập SERIALIZABLE có Retry Loop):
+-- EXPLAIN ANALYZE 
+-- SELECT fn_TraGia_Serializable(1, 7, 6250000, gen_random_uuid());   -- ❌ chèn THẬT 1 lượt vào dữ liệu
+
+--sai
 
 
--- 2. Đo thời gian thực thi của Phương án 2 (Mức cô lập SERIALIZABLE có Retry Loop):
-EXPLAIN ANALYZE 
-SELECT fn_TraGia_Serializable(1, 7, 6250000, gen_random_uuid());
 
+-- Đo thời gian MỘT lần gọi riêng lẻ (không tranh chấp). Bọc BEGIN ... ROLLBACK để KHÔNG ghi dữ liệu.
+-- Giá trả lấy tự động = giá hiện tại + 1 bước giá, nên luôn hợp lệ.
+-- Số liệu SO SÁNH ĐỒNG THỜI lấy từ script thuc_nghiem_buoc7.py (mục C).
+BEGIN;
+EXPLAIN ANALYZE
+SELECT fn_TraGia(1, 8, (SELECT GiaHienTai + BuocGia FROM PHIENDAUGIA WHERE MaPhien = 1), gen_random_uuid());
+ROLLBACK;
+
+BEGIN;
+EXPLAIN ANALYZE
+SELECT fn_TraGia_Serializable(1, 7, (SELECT GiaHienTai + BuocGia FROM PHIENDAUGIA WHERE MaPhien = 1), gen_random_uuid());
+ROLLBACK;
+
+
+
+
+--thêm 
+-- TEST CASE 7: KIỂM THỬ ĐỒNG THỜI (mở 2 tab Query Tool: TAB A và TAB B, cùng CSDL)
+-- Mỗi kịch bản: chạy 7.0 trước để đặt lại phiên 1 (giá 5.500.000). Mã lượt có thể khác do sequence.
+
+-- 7.0. ĐẶT LẠI PHIÊN 1 (chạy ở TAB A)
+BEGIN;
+DELETE FROM KETQUADAUGIA WHERE MaPhien = 1;
+UPDATE PHIENDAUGIA
+SET TrangThaiPhien = 'DANG_DIEN_RA',
+    ThoiDiemMo   = LEAST(ThoiDiemMo, CURRENT_TIMESTAMP - INTERVAL '1 hour'),
+    ThoiDiemDong = CURRENT_TIMESTAMP + INTERVAL '2 hours',
+    (GiaHienTai, MaLuotDanDau) = (SELECT SoTien, MaLuotTraGia FROM LUOTTRAGIA
+                                  WHERE MaPhien = 1 AND MaLuotTraGia <= 45
+                                  ORDER BY SoTien DESC, MaLuotTraGia LIMIT 1)
+WHERE MaPhien = 1;
+DELETE FROM LUOTTRAGIA WHERE MaPhien = 1 AND MaLuotTraGia > 45;
+COMMIT;
+
+-- 7.1. HAI NGƯỜI TRẢ GIÁ CÙNG LÚC (chạy 2 lần: với fn_TraGia và với fn_TraGia_Serializable)
+-- TAB A: người 8 trả 6.000.000, CHƯA COMMIT
+BEGIN;
+SELECT fn_TraGia(1, 8, 6000000, gen_random_uuid()) AS luot_A;
+-- TAB B: người 7 vẫn thấy giá cũ 5.500.000, trả 5.750.000  -> TAB B ĐỨNG CHỜ
+SELECT fn_TraGia(1, 7, 5750000, gen_random_uuid()) AS luot_B;
+-- TAB A:
+COMMIT;
+-- Kỳ vọng: TAB B bị TỪ CHỐI "Giá trả phải từ 6250000.00 ..."; đối soát (test case 6) phiên 1 = NHAT_QUAN.
+
+-- 7.2. GỬI LẠI CÙNG MÃ YÊU CẦU KHI LẦN ĐẦU CHƯA XONG
+-- TAB A:
+BEGIN;
+SELECT fn_TraGia_Serializable(1, 8, 6000000, '19000000-0000-4000-8000-000000000702'::uuid) AS lan_1;
+-- TAB B (cùng UUID) -> ĐỨNG CHỜ
+SELECT fn_TraGia_Serializable(1, 8, 6000000, '19000000-0000-4000-8000-000000000702'::uuid) AS lan_2;
+-- TAB A:
+COMMIT;
+-- Kỳ vọng: lan_2 = lan_1 (cùng mã lượt), không lỗi duplicate key; chỉ có 1 dòng:
+SELECT COUNT(*) FROM LUOTTRAGIA WHERE MaYeuCau = '19000000-0000-4000-8000-000000000702'::uuid;
+
+-- 7.3. TRẢ GIÁ CẠNH TRANH VỚI ĐÓNG PHIÊN (chạy 7.0 trước)
+-- TAB A: cho phiên 1 hết giờ sau 30 giây
+UPDATE PHIENDAUGIA SET ThoiDiemDong = CURRENT_TIMESTAMP + INTERVAL '30 seconds' WHERE MaPhien = 1;
+-- TAB A (trong vòng 30 giây): người 8 trả giá, CHƯA COMMIT
+BEGIN;
+SELECT fn_TraGia(1, 8, 6000000, gen_random_uuid()) AS luot_A;
+-- ĐỢI QUÁ 30 GIÂY, rồi TAB B: đóng phiên -> ĐỨNG CHỜ (vì A đang giữ khóa dòng phiên 1)
+SELECT fn_DongPhienDauGia(1) AS luot_thang;
+-- TAB A:
+COMMIT;
+-- Kỳ vọng: TAB B trả về đúng luot_A (lượt của A được tính). Sau đó trả giá tiếp phải bị từ chối:
+SELECT fn_TraGia(1, 7, 6250000, gen_random_uuid());              -- 'Phiên không nhận trả giá'
+SELECT p.TrangThaiPhien, k.MaLuotThang, p.GiaHienTai
+FROM PHIENDAUGIA p JOIN KETQUADAUGIA k USING (MaPhien) WHERE MaPhien = 1;   -- DA_DONG, luot_A, 6000000
+
+-- 7.4. LỖI SAU KHI GHI LƯỢT NHƯNG TRƯỚC KHI CẬP NHẬT GIÁ (chạy 7.0 trước)
+SELECT COUNT(*) AS so_dong_truoc FROM LUOTTRAGIA;                -- ghi lại: n
+BEGIN;
+INSERT INTO LUOTTRAGIA (MaPhien, MaNguoiTraGia, SoTien, MaYeuCau)
+VALUES (1, 7, 7000000, gen_random_uuid());                       -- đã ghi lượt...
+SELECT 1/0;                                                      -- ...sự cố TRƯỚC khi UPDATE giá
+-- pgAdmin dừng ở lỗi "division by zero". Chạy RIÊNG 2 dòng sau:
+ROLLBACK;
+SELECT COUNT(*) AS so_dong_sau FROM LUOTTRAGIA;                  -- vẫn = n: không có dữ liệu dở dang
