@@ -355,4 +355,5 @@ ROLLBACK;
 --
 -- Bảng in ra gồm: Số yêu cầu, Thành công, Bị từ chối, Thất bại, Số lần thử lại, TB/p50/p95 (ms),
 -- Yêu cầu/giây và Đối soát (NHAT_QUAN/SAI_LECH). Nên chạy 3-5 lần và lấy trung bình cho báo cáo.
+-- Kết quả đo thật (5 lần chạy, trung bình + từng lần): xem file KetQua_ThucNghiem_Buoc7.md
 -- -----------------------------------------------------------------------------
