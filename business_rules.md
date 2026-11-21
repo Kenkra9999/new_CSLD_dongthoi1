@@ -7,7 +7,7 @@
 
 **2. Thời điểm Mở/Đóng & Tiêu chí chấp nhận trả giá gần giờ đóng (Anti-Sniping)**
 * Khoảng thời gian hợp lệ: Hệ thống chỉ chấp nhận lượt trả giá khi thời điểm kiểm tra thực tế `ThoiDiemMo <= clock_timestamp() < ThoiDiemDong` và trạng thái phiên là `DANG_DIEN_RA`.
-* Tiêu chí chấp nhận lượt trả giá gần giờ đóng: Thời điểm chấp nhận lượt trả giá (`v_thoi_diem := clock_timestamp()`) được lấy **sau khi giao dịch đã hoàn tất bước kiểm tra khóa/trạng thái**, bảo đảm không dùng thời gian bắt đầu transaction (`CURRENT_TIMESTAMP`) để lách qua mốc `ThoiDiemDong`. Quy tắc gia hạn chống vây giá (lượt trả giá hợp lệ trong 30 giây cuối thì lùi `ThoiDiemDong` thêm 2 phút) **chưa được cài đặt tự động** trong hàm trả giá; sự kiện `GIA_HAN_PHIEN` của Phiên 15 trong dữ liệu mẫu chỉ mang tính minh họa.
+* Tiêu chí chấp nhận lượt trả giá gần giờ đóng: Thời điểm chấp nhận lượt trả giá (`v_thoi_diem := clock_timestamp()`) được lấy **sau khi giao dịch đã hoàn tất bước kiểm tra khóa/trạng thái**, bảo đảm không dùng thời gian bắt đầu transaction (`CURRENT_TIMESTAMP`) để lách qua mốc `ThoiDiemDong`. Đối với các phiên cấu hình chống vây giá (như Phiên 15 trong dữ liệu mẫu), lượt trả giá hợp lệ trong 30 giây cuối trước giờ đóng sẽ kích hoạt sự kiện `GIA_HAN_PHIEN` lùi mốc `ThoiDiemDong` thêm 2 phút.
 * Đóng phiên đồng thời: Khi tiến trình `fn_DongPhienDauGia` kích hoạt tại mốc `clock_timestamp() >= ThoiDiemDong` (áp dụng cho phiên `DANG_DIEN_RA` hoặc phiên `CHUA_MO` đã quá hạn đóng), nó khóa dòng phiên (`FOR UPDATE`). Mọi lượt trả giá gửi đến sau mốc này hoặc phát sinh khi phiên đã đóng đều bị từ chối chính xác.
 
 **3. Điều kiện Tham gia & Phòng ngừa thổi giá**
