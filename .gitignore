@@ -7,3 +7,5 @@
 *.temp
 buoc6.pdf
 
+
+__pycache__/

@@ -1,7 +1,7 @@
 -- 1. HÀM BÁO CÁO CÓ BỘ LỌC ĐỘNG (Dynamic SQL)
 -- Mục đích: Lọc danh sách phiên đấu giá theo nhiều tiêu chí tùy chọn:
 --   + p_MaDanhMucGoc : Lọc theo nhánh danh mục (tự động lấy cả danh mục con cháu)
---   + p_TrangThai    : Lọc theo trạng thái phiên (VD: 'DANG_MO', 'DA_DONG'...)
+--   + p_TrangThai    : Lọc theo trạng thái phiên (VD: 'DANG_DIEN_RA', 'DA_DONG'...)
 --   + p_LoaiTaiSan   : Lọc theo phân lớp ('TACPHAMNGHETHUAT', 'DOSUUTAM', 'THIETBIDIENTU')
 --   + p_GiaTu/p_GiaDen: Khoảng giá hiện tại (hoặc giá khởi điểm nếu chưa ai trả giá)
 --   + p_TuKhoa       : Tìm kiếm gần đúng (ILIKE) theo tên tài sản
@@ -133,6 +133,7 @@ BEGIN
     SELECT * INTO v_luot FROM LUOTTRAGIA WHERE MaYeuCau = p_MaYeuCau;
     IF FOUND THEN
         IF v_luot.MaPhien IS DISTINCT FROM p_MaPhien
+        
            OR v_luot.MaNguoiTraGia IS DISTINCT FROM p_MaNguoiDung
            OR v_luot.SoTien IS DISTINCT FROM p_SoTien THEN
             RAISE EXCEPTION 'Mã yêu cầu đã dùng cho lượt trả giá khác';
@@ -268,13 +269,18 @@ DECLARE
     v_ma_luot BIGINT;
     v_attempt INT;
 BEGIN
-    -- Kiểm tra đầu vào đồng bộ với Phương án 1 (Khắc phục lỗi #18)
+    -- [SỬA LỖI 18] Kiểm tra đầu vào giống hệt Phương án 1 (giới hạn số tiền, tối đa 2 chữ số thập phân).
+    --   Bản gốc chỉ kiểm tra NULL và <= 0, nên 2 phương án không so sánh công bằng.
     IF p_MaYeuCau IS NULL OR p_SoTien IS NULL OR p_SoTien <= 0
        OR p_SoTien > 99999999999999.99 OR p_SoTien <> TRUNC(p_SoTien, 2) THEN
         RAISE EXCEPTION 'Mã yêu cầu hoặc số tiền không hợp lệ' USING ERRCODE = '22023';
     END IF;
 
-    -- Khóa tư vấn theo mã UUID để tuần tự hóa 2 request gửi trùng cùng lúc (Khắc phục lỗi #3)
+    -- [SỬA LỖI 3] Khóa tư vấn theo mã UUID, đặt TRƯỚC bước kiểm tra gửi trùng.
+    --   Bản gốc: không khóa -> lần gửi trùng không thấy lượt CHƯA COMMIT của lần đầu,
+    --            chạy tiếp tới INSERT rồi nhận lỗi duplicate key "uk_luottragia_mayeucau".
+    --   Bản sửa: lần gửi trùng phải ĐỢI lần đầu COMMIT/ROLLBACK, sau đó thấy lượt cũ và trả đúng mã.
+    --            Khóa tự nhả khi giao dịch kết thúc (giống Phương án 1).
     PERFORM pg_advisory_xact_lock(hashtextextended(p_MaYeuCau::TEXT, 19));
 
     -- Vòng lặp thử lại tối đa 5 lần khi gặp xung đột tương tranh
@@ -283,12 +289,13 @@ BEGIN
             -- 1. Kiểm tra chống gửi lặp cùng mã yêu cầu (Idempotency)
             SELECT * INTO v_luot FROM LUOTTRAGIA WHERE MaYeuCau = p_MaYeuCau;
             IF FOUND THEN
+                -- [SỬA LỖI 3] Cùng mã nhưng khác phiên / người / số tiền -> báo lỗi, không trả nhầm lượt.
                 IF v_luot.MaPhien IS DISTINCT FROM p_MaPhien
                    OR v_luot.MaNguoiTraGia IS DISTINCT FROM p_MaNguoiDung
                    OR v_luot.SoTien IS DISTINCT FROM p_SoTien THEN
                     RAISE EXCEPTION 'Mã yêu cầu đã dùng cho lượt trả giá khác';
                 END IF;
-                RETURN v_luot.MaLuotTraGia;
+                RETURN v_luot.MaLuotTraGia;   -- gửi lại: trả đúng mã lượt cũ
             END IF;
 
             -- 2. Đọc dữ liệu phiên lạc quan (KHÔNG dùng FOR UPDATE)
@@ -298,6 +305,8 @@ BEGIN
             END IF;
 
             -- 3. Kiểm tra điều kiện người tham gia và mức giá (giữ khóa FOR SHARE như Phương án 1)
+            -- [SỬA LỖI 18] Thêm FOR SHARE ở TAISAN và DANGKY: đăng ký không thể bị thu hồi
+            --   đúng lúc đang trả giá (bản gốc đọc không khóa).
             SELECT MaNguoiBan INTO v_nguoi_ban FROM TAISAN
             WHERE MaTaiSan = v_phien.MaTaiSan FOR SHARE;
             IF p_MaNguoiDung = v_nguoi_ban THEN
@@ -310,6 +319,8 @@ BEGIN
                 RAISE EXCEPTION 'Người trả giá chưa có đăng ký được duyệt cho phiên này';
             END IF;
 
+            -- Lưu ý: v_phien đọc ở bước 2 KHÔNG khóa, nên giá này có thể đã cũ.
+            --   Nếu cũ, câu UPDATE ở bước 4 (kiểm tra PhienBan) sẽ phát hiện và cho thử lại.
             v_gia_toi_thieu := COALESCE(v_phien.GiaHienTai + v_phien.BuocGia, v_phien.GiaKhoiDiem);
             IF p_SoTien < v_gia_toi_thieu OR MOD(p_SoTien - v_phien.GiaKhoiDiem, v_phien.BuocGia) <> 0 THEN
                 RAISE EXCEPTION 'Giá trả phải từ % và đúng lưới bước giá %',
@@ -326,6 +337,12 @@ BEGIN
             VALUES (p_MaPhien, p_MaNguoiDung, p_SoTien, p_MaYeuCau, v_thoi_diem)
             RETURNING MaLuotTraGia INTO v_ma_luot;
 
+            -- [SỬA LỖI 1] Mất cập nhật (lost update).
+            --   Bản gốc: UPDATE ... WHERE MaPhien = p_MaPhien  (không kiểm tra gì thêm).
+            --     A trả 6.250.000 chưa COMMIT, B đọc giá cũ 5.500.000 nên thấy 6.000.000 "hợp lệ",
+            --     chờ A COMMIT rồi GHI ĐÈ giá thành 6.000.000 -> đối soát SAI_LECH.
+            --   Bản sửa: thêm điều kiện PhienBan = PhienBan lúc đọc. Nếu người khác đã đổi giá
+            --     thì PhienBan đã tăng -> 0 dòng được cập nhật -> báo 40001 để thử lại với giá mới.
             UPDATE PHIENDAUGIA
             SET GiaHienTai = p_SoTien, MaLuotDanDau = v_ma_luot, PhienBan = PhienBan + 1
             WHERE MaPhien = p_MaPhien AND PhienBan = v_phien.PhienBan;
@@ -344,10 +361,23 @@ BEGIN
             RETURN v_ma_luot; -- Trả về thành công
 
         EXCEPTION
+            -- [SỬA LỖI 2] Vòng thử lại trong hàm.
+            --   Bản gốc: hàm tưởng mình chạy SERIALIZABLE nhưng thực tế chạy READ COMMITTED
+            --     (hàm không tự đặt được mức cô lập). Khi gọi trong SERIALIZABLE thật, 5 lần thử
+            --     nằm chung 1 giao dịch, cùng ảnh dữ liệu cũ -> lần nào cũng lỗi; lỗi 40001 còn bị
+            --     đổi thành P0001 nên ứng dụng không biết để thử lại.
+            --   Bản sửa:
+            --     + READ COMMITTED: mỗi lần thử đọc lại dữ liệu mới nhất -> thử lại có tác dụng thật.
+            --     + SERIALIZABLE / REPEATABLE READ: ném ngay mã 40001 ra ngoài, để ỨNG DỤNG
+            --       ROLLBACK và chạy lại bằng một giao dịch MỚI.
             -- Bắt lỗi xung đột tuần tự hóa (40001), deadlock hoặc trùng mức giá đồng thời
             WHEN serialization_failure OR deadlock_detected OR unique_violation THEN
                 -- Nếu bên ngoài đang bọc trong SERIALIZABLE/REPEATABLE READ thì ném thẳng 40001 ra ngoài
-                IF current_setting('transaction_isolation') <> 'read committed' OR v_attempt = 5 THEN
+                IF current_setting('transaction_isolation') <> 'read committed' THEN
+                    -- Không thử lại trong cùng giao dịch (vẫn dùng ảnh dữ liệu cũ): trả 40001 cho ứng dụng
+                    RAISE EXCEPTION 'Xung đột tuần tự hóa: hãy ROLLBACK và chạy lại giao dịch'
+                        USING ERRCODE = 'serialization_failure';
+                ELSIF v_attempt = 5 THEN
                     RAISE EXCEPTION 'Giao dịch thất bại sau % lần thử lại do xung đột tuần tự hóa', v_attempt
                         USING ERRCODE = 'serialization_failure';
                 END IF;
@@ -357,7 +387,6 @@ BEGIN
     END LOOP;
 END;
 $$;
-
 
 
 -- 1. Truy vấn: Xây dựng cây phân cấp danh mục và thống kê cộng dồn 

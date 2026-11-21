@@ -28,6 +28,7 @@ Project-CSDL-Nangcao/
 ├── seed_data.sql                       # BƯỚC 2 & 4: Bộ dữ liệu giả lập mẫu đầy đủ tính toàn vẹn
 ├── queries.sql                         # BƯỚC 4 & 5: Định nghĩa 4 Hàm nghiệp vụ & Bộ truy vấn SQL nâng cao
 ├── test_cases.sql                      # BƯỚC 7: Trọn bộ kịch bản kiểm thử & Thu thập 5 ảnh minh chứng
+├── thuc_nghiem_buoc7.py                # BƯỚC 7: Đo định lượng nhiều người trả giá cùng lúc (Minh chứng 5)
 ├── Chuong5_SoSanh_Transaction.docx     # BƯỚC 5: Báo cáo so sánh chuyên sâu 2 cơ chế Concurrency
 └── Chuong6_MoHinhDoiTuong_OQL.docx     # BƯỚC 6: Báo cáo Thiết kế Mô hình Đối tượng (ODL & OQL)
 ```
@@ -36,9 +37,9 @@ Project-CSDL-Nangcao/
 
 ## ⚙️ Các Điểm Nhấn Kỹ thuật Nổi bật trong CSDL
 
-1. **Chuẩn hóa dữ liệu đạt BCNF / 3NF:**
-   - 10/11 bảng đạt chuẩn BCNF tuyệt đối.
-   - Bảng `PHIENDAUGIA` chuẩn hóa 3NF có chủ đích khi lưu trữ `GiaHienTai` và `MaLuotDanDau` để tối ưu hóa thao tác đọc trạng thái và kiểm tra bước giá đạt độ phức tạp $O(1)$.
+1. **Chuẩn hóa dữ liệu & phi chuẩn hóa có chủ đích:**
+   - Bảng `PHIENDAUGIA` lưu dư `GiaHienTai` và `MaLuotDanDau` để đọc trạng thái và kiểm tra bước giá nhanh. Đây là phi chuẩn hóa có chủ đích: tồn tại phụ thuộc bắc cầu `MaPhien → MaLuotDanDau → GiaHienTai`, nên bảng này **không đạt 3NF**.
+   - Cơ chế giữ nhất quán với lịch sử: `GiaHienTai`/`MaLuotDanDau` chỉ được cập nhật trong **cùng giao dịch** với lệnh INSERT lượt trả giá (khóa dòng `FOR UPDATE` ở phương án 1, kiểm tra `PhienBan` ở phương án 2); khóa ngoại trì hoãn `(MaLuotDanDau, MaPhien)`; câu đối soát ở Test Case 6.
 2. **Khóa ngoại kép tham chiếu chéo có trì hoãn (`DEFERRABLE INITIALLY DEFERRED`):**
    - Ràng buộc `fk_phiendaugia_luotdandau` ghép cặp `(MaLuotDanDau, MaPhien)` tham chiếu ngược về `LUOTTRAGIA` đảm bảo lượt dẫn đầu bắt buộc phải thuộc về chính phiên đó, loại bỏ hoàn toàn lỗi gán chéo dữ liệu giữa các phiên.
    - Thuộc tính `DEFERRED` giải quyết triệt để phụ thuộc vòng (Circular Dependency) khi ghi nhận lượt trả giá mới trong cùng một transaction.
@@ -60,23 +61,23 @@ Project-CSDL-Nangcao/
 Để đảm bảo CSDL sạch sẽ, đúng ràng buộc khóa ngoại và không bị lỗi transaction, bạn thực hiện lần lượt theo 4 bước sau trong pgAdmin hoặc DBeaver:
 
 ### Bước 1: Khởi tạo Cấu trúc Bảng CSDL
-* **File thực thi:** [`DDL_HeThongDauGia.sql`](file:///d:/Project-CSDL-Nangcao/DDL_HeThongDauGia.sql)
+* **File thực thi:** [`DDL_HeThongDauGia.sql`](DDL_HeThongDauGia.sql)
 * **Thao tác:** Mở file và nhấn **F5 (Execute All)**.
-* **Kết quả:** Xóa sạch các bảng cũ (CASCADE) và tạo mới 11 bảng chuẩn, khóa chính, khóa ngoại kép, các ràng buộc `CHECK` và các chỉ mục `INDEX`.
+* **Kết quả:** Xóa sạch các bảng cũ (CASCADE) và tạo mới 11 bảng chuẩn, khóa chính, khóa ngoại kép, các ràng buộc `CHECK` (chỉ mục được PostgreSQL tạo ngầm theo `PRIMARY KEY` / `UNIQUE`).
 
 ### Bước 2: Nạp Dữ liệu Mẫu (Seed Data)
-* **File thực thi:** [`seed_data.sql`](file:///d:/Project-CSDL-Nangcao/seed_data.sql)
+* **File thực thi:** [`seed_data.sql`](seed_data.sql)
 * **Thao tác:** Mở file và nhấn **F5 (Execute All)**.
 * **Kết quả:** Nạp dữ liệu hoàn chỉnh cho 11 bảng (15 người dùng, 21 danh mục 3 cấp, 18 tài sản, 20 phiên đấu giá, 50 đăng ký, 45 lượt trả giá lịch sử và kết quả chốt phiên).
 
 ### Bước 3: Cài đặt Hàm Nghiệp vụ & Khảo sát Truy vấn Nâng cao
-* **File thực thi:** [`queries.sql`](file:///d:/Project-CSDL-Nangcao/queries.sql)
+* **File thực thi:** [`queries.sql`](queries.sql)
 * **Cấu trúc file chia làm 2 khối rõ ràng:**
   * **Khối I (Ở trên): Cài đặt 4 Hàm & Thủ tục nghiệp vụ:**
     1. `fn_BaoCaoPhienDauGiaDong` (Dynamic SQL lọc phiên đa tiêu chí)
     2. `fn_TraGia` (Khóa bi quan `SELECT ... FOR UPDATE`)
     3. `fn_DongPhienDauGia` (Chốt phiên và xác định người thắng an toàn)
-    4. `fn_TraGia_Serializable` (Tuần tự hóa SSI có Retry Loop bắt mã `40001`)
+    4. `fn_TraGia_Serializable` (Kiểm soát lạc quan: đọc không khóa, kiểm tra `PhienBan` khi UPDATE; ở READ COMMITTED tự thử lại trong hàm, ở SERIALIZABLE trả mã `40001` để ứng dụng thử lại bằng giao dịch mới)
   * **Khối II (Ở dưới): Bộ truy vấn SQL nâng cao:**
     * Đệ quy cây danh mục (WITH RECURSIVE roll-up).
     * Theo dõi phiên sắp kết thúc trong 1 giờ, người dẫn đầu phiên.
@@ -92,14 +93,14 @@ Project-CSDL-Nangcao/
 
 ## 🧪 Hướng dẫn Chạy Kiểm thử & Lấy Minh chứng (Bước 7)
 
-Toàn bộ các kịch bản kiểm thử độc lập đã được gom vào file **[`test_cases.sql`](file:///d:/Project-CSDL-Nangcao/test_cases.sql)**. Bạn mở file này trong pgAdmin/DBeaver, bôi đen từng mục và bấm **F5** để lấy 5 ảnh minh chứng bắt buộc cho bài báo cáo:
+Toàn bộ các kịch bản kiểm thử độc lập đã được gom vào file **[`test_cases.sql`](test_cases.sql)**. Bạn mở file này trong pgAdmin/DBeaver, bôi đen từng mục và bấm **F5** để lấy 5 ảnh minh chứng bắt buộc cho bài báo cáo:
 
 ### 1. Chuẩn bị trước khi test (Bước 0 trong file test)
 Chạy lệnh làm mới thời gian để Phiên 1 và Phiên 4 mở thêm 2 giờ:
 ```sql
 UPDATE PHIENDAUGIA 
 SET TrangThaiPhien = 'DANG_DIEN_RA',
-    ThoiDiemMo = CURRENT_TIMESTAMP - INTERVAL '1 hour',
+    ThoiDiemMo = LEAST(ThoiDiemMo, CURRENT_TIMESTAMP - INTERVAL '1 hour'),
     ThoiDiemDong = CURRENT_TIMESTAMP + INTERVAL '2 hours' 
 WHERE MaPhien IN (1, 4);
 ```
@@ -108,11 +109,20 @@ WHERE MaPhien IN (1, 4);
 
 | STT | Tên Minh chứng theo Đề cương | Câu lệnh thực thi trong `test_cases.sql` | Kết quả kỳ vọng để chụp ảnh |
 | :---: | :--- | :--- | :--- |
-| **MC 1** | Mỗi phiên kết thúc có **tối đa một kết quả thắng** theo quy tắc đã công bố. | Chạy mục **5.1 & 5.2** (`SELECT fn_DongPhienDauGia(2);` và `SELECT * FROM KETQUADAUGIA WHERE MaPhien = 2;`) | Hàm trả về mã lượt thắng (ví dụ: `4`). Bảng `KETQUADAUGIA` chỉ có **duy nhất 1 dòng** chốt người thắng với mức giá cao nhất. |
-| **MC 2** | Giá cao nhất lưu riêng (`GiaHienTai`) **luôn khớp với lịch sử trả giá**. | Chạy mục **Test Case 6** (Truy vấn kiểm tra tính nhất quán CSDL). | Bảng đối soát trả về trạng thái **`NHAT_QUAN`** cho tất cả các phiên, không có dòng nào bị lệch. |
+| **MC 1** | Mỗi phiên kết thúc có **tối đa một kết quả thắng** theo quy tắc đã công bố. | Mục **5.1 & 5.2** (đóng Phiên 2) và **5.4** (đóng Phiên 4 khi đang có người trả giá, 2 tab). | `KETQUADAUGIA` chỉ có **duy nhất 1 dòng** cho mỗi phiên; ở 5.4 đóng phiên chờ lượt dở dang commit rồi chốt đúng lượt đó, lượt đến sau bị từ chối. |
+| **MC 2** | Giá cao nhất lưu riêng (`GiaHienTai`) **luôn khớp với lịch sử trả giá**. | Mục **4.3, 4.4** (đối soát sau tranh chấp 2 tab) và **Test Case 6**. | Bảng đối soát trả về trạng thái **`NHAT_QUAN`** cho tất cả các phiên, không có dòng nào bị lệch. |
 | **MC 3** | Yêu cầu gửi lại cùng mã UUID **không tạo lượt trả giá trùng** (Idempotency). | Chạy mục **2.1 rồi chạy lại 2.2** với cùng một mã UUID: `'19000000-0000-4000-8000-000000000101'::uuid`. | Cả 2 lần đều trả về cùng một mã lượt `46`. Bảng `LUOTTRAGIA` đếm được đúng **1 dòng duy nhất**. |
-| **MC 4** | Lỗi giữa giao dịch **không để lại dữ liệu dở dang** (Tính nguyên tử Atomicity / Rollback). | Chạy mục **3.1 hoặc 3.3** (Người bán tự trả giá hoặc trả sai lưới bước giá). | Hệ thống báo lỗi và tự động **ROLLBACK**, không có dòng dữ liệu rác nào được lưu vào bảng. |
-| **MC 5** | Có **bảng so sánh định lượng** hai giải pháp kiểm soát đồng thời trên cùng dữ liệu. | Chạy so sánh mục **2.1** (`fn_TraGia`) và mục **4.1** (`fn_TraGia_Serializable`). | Đo thời gian thực thi (Execution time ms) và đối chiếu với bảng phân tích trong file `Chuong5_SoSanh_Transaction.docx`. |
+| **MC 4** | Lỗi giữa giao dịch **không để lại dữ liệu dở dang** (Tính nguyên tử Atomicity / Rollback). | Mục **3.4**: INSERT lượt trả giá rồi gây lỗi `SELECT 1/0` trước khi cập nhật giá, sau đó `ROLLBACK`. | Số lượt trả giá trước và sau bằng nhau, `SoLuotDoDang = 0`, `GiaHienTai` không đổi. |
+| **MC 5** | Có **bảng so sánh định lượng** hai giải pháp kiểm soát đồng thời trên cùng dữ liệu. | Chạy `python thuc_nghiem_buoc7.py` (mục **7.3**; xem cách chạy bên dưới). | Bảng so sánh PA1 / PA2 (READ COMMITTED) / PA2 (SERIALIZABLE + thử lại): số yêu cầu thành công, bị từ chối, số lần thử lại, thời gian phản hồi TB/p50/p95, đối soát `NHAT_QUAN`. |
+
+### 3. Đo định lượng nhiều người trả giá cùng lúc (Minh chứng 5)
+```bash
+pip install "psycopg[binary]"          # cài 1 lần
+python thuc_nghiem_buoc7.py --chi-tiet   # chạy chậm, in từng lượt trả giá, nhấn Enter qua từng bước
+python thuc_nghiem_buoc7.py              # đo thật (14 người x 5 lần) và in bảng so sánh
+```
+* Mặc định kết nối `host=localhost user=postgres dbname=DauGia_check`; có thể truyền chuỗi kết nối khác làm tham số.
+* Script đặt lại Phiên 1 trước mỗi lượt đo (cùng dữ liệu, cùng cấu hình cho cả 2 phương án) và khôi phục dữ liệu khi kết thúc.
 
 ---
 
@@ -132,13 +142,13 @@ WHERE MaPhien IN (1, 4);
 
 ## 📚 Tóm tắt 7 Bước Đề tài theo Đề cương
 
-1. **Bước 1 - Đặc tả quy tắc đấu giá:** Hoàn thiện 6 quy tắc nghiệp vụ tại [`business_rules.md`](file:///d:/Project-CSDL-Nangcao/business_rules.md).
-2. **Bước 2 - Thiết kế mô hình EER:** Sơ đồ thực thể liên kết mở rộng tổng quát hóa/chuyên biệt hóa và chuyển dịch thành [`DDL_HeThongDauGia.sql`](file:///d:/Project-CSDL-Nangcao/DDL_HeThongDauGia.sql).
+1. **Bước 1 - Đặc tả quy tắc đấu giá:** Hoàn thiện 6 quy tắc nghiệp vụ tại [`business_rules.md`](business_rules.md).
+2. **Bước 2 - Thiết kế mô hình EER:** Sơ đồ thực thể liên kết mở rộng tổng quát hóa/chuyên biệt hóa và chuyển dịch thành [`DDL_HeThongDauGia.sql`](DDL_HeThongDauGia.sql).
 3. **Bước 3 - Phân tích phụ thuộc hàm & Chuẩn hóa:** Xác định 16 FD, tìm phủ tối tiểu $F_{min}$ và chứng minh chuẩn 3NF/BCNF.
-4. **Bước 4 - Xây dựng truy vấn SQL nâng cao:** Đệ quy cây phân cấp, Dynamic SQL, xếp hạng phân tích số liệu tại [`queries.sql`](file:///d:/Project-CSDL-Nangcao/queries.sql).
-5. **Bước 5 - Thiết kế và so sánh Transaction:** Hoàn thành 2 giải pháp kiểm soát đồng thời tại [`queries.sql`](file:///d:/Project-CSDL-Nangcao/queries.sql) và biên soạn tài liệu lý thuyết tại [`Chuong5_SoSanh_Transaction.docx`](file:///d:/Project-CSDL-Nangcao/Chuong5_SoSanh_Transaction.docx).
-6. **Bước 6 - Thiết kế mô hình đối tượng và OQL:** Đặc tả ODL 5 lớp và 3 truy vấn OQL chuẩn ODMG 3.0 tại [`Chuong6_MoHinhDoiTuong_OQL.docx`](file:///d:/Project-CSDL-Nangcao/Chuong6_MoHinhDoiTuong_OQL.docx).
-7. **Bước 7 - Thực nghiệm và phân tích kết quả:** Bộ kịch bản kiểm thử độc lập tại [`test_cases.sql`](file:///d:/Project-CSDL-Nangcao/test_cases.sql) thu thập trọn bộ 5 minh chứng.
+4. **Bước 4 - Xây dựng truy vấn SQL nâng cao:** Đệ quy cây phân cấp, Dynamic SQL, xếp hạng phân tích số liệu tại [`queries.sql`](queries.sql).
+5. **Bước 5 - Thiết kế và so sánh Transaction:** Hoàn thành 2 giải pháp kiểm soát đồng thời tại [`queries.sql`](queries.sql) và biên soạn tài liệu lý thuyết tại [`Chuong5_SoSanh_Transaction.docx`](Chuong5_SoSanh_Transaction.docx).
+6. **Bước 6 - Thiết kế mô hình đối tượng và OQL:** Đặc tả ODL 5 lớp và 3 truy vấn OQL chuẩn ODMG 3.0 tại [`Chuong6_MoHinhDoiTuong_OQL.docx`](Chuong6_MoHinhDoiTuong_OQL.docx).
+7. **Bước 7 - Thực nghiệm và phân tích kết quả:** Bộ kịch bản kiểm thử độc lập tại [`test_cases.sql`](test_cases.sql) (kịch bản 2 tab cho tranh chấp đồng thời) và [`thuc_nghiem_buoc7.py`](thuc_nghiem_buoc7.py) (đo định lượng), thu thập trọn bộ 5 minh chứng.
 
 ---
 *Dự án phục vụ học tập và nghiên cứu môn Cơ sở dữ liệu Nâng cao.*
